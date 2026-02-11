@@ -1,0 +1,195 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Función de ayuda para obtener el rol del usuario autenticado
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+
+    // Función para obtener el assigned_client_id del usuario
+    function getAssignedClientId() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.assigned_client_id;
+    }
+
+    // Colección de Usuarios: Solo lectura para autenticados, escritura para admin
+    match /users/{userId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && getUserRole() == 'admin';
+    }
+
+    // Colección de Clientes: Lectura para todos, escritura para admin/manager
+    match /clients/{clientId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (getUserRole() == 'admin' || getUserRole() == 'manager');
+    }
+
+    // Colección de Posts: Lectura para todos, lógica de escritura según rol
+    match /posts/{postId} {
+      allow read: if request.auth != null;
+      
+      // Permitir creación a Admin, Manager y Creative
+      allow create: if request.auth != null && (
+        getUserRole() == 'admin' || 
+        getUserRole() == 'manager' || 
+        getUserRole() == 'creative'
+      );
+
+      // Permitir actualización (cambio de estado, feedback, etc.)
+      allow update: if request.auth != null && (
+        getUserRole() == 'admin' || 
+        getUserRole() == 'manager' || 
+        (getUserRole() == 'creative' && (
+          // Creative no puede mover el post a estados finales, pero puede editar contenido
+          // incluso si el post ya está en esos estados mientras no cambie el status.
+          request.resource.data.status == resource.data.status ||
+          (request.resource.data.status != 'approved' &&
+           request.resource.data.status != 'published' &&
+           request.resource.data.status != 'finished')
+        )) ||
+        (getUserRole() == 'production' && (
+          // Production solo puede cambiar el estado a: finished/published
+          // y no puede editar el contenido del post.
+          request.resource.data.diff(resource.data).changedKeys().hasOnly(['status', 'updatedAt']) && (
+            // approved -> finished/published
+            (
+              resource.data.status == 'approved' &&
+              (request.resource.data.status == 'finished' || request.resource.data.status == 'published')
+            ) ||
+            // finished -> published
+            (
+              resource.data.status == 'finished' &&
+              request.resource.data.status == 'published'
+            )
+          )
+        )) ||
+        // Cliente puede aprobar/rechazar posts de su cliente asignado
+        (getUserRole() == 'client' && resource.data.client_id == getAssignedClientId() &&
+         (request.resource.data.status == 'approved' || request.resource.data.status == 'rejected'))
+      );
+
+      // Solo Admin puede borrar
+      allow delete: if request.auth != null && getUserRole() == 'admin';
+      
+      // Subcollection: Comentarios en posts
+      match /comments/{commentId} {
+        // Todos los autenticados pueden leer comentarios
+        allow read: if request.auth != null;
+        
+        // Pueden crear comentarios: autenticados
+        allow create: if request.auth != null;
+        
+        // Solo el autor del comentario o admin pueden borrar
+        allow delete: if request.auth != null && (
+          resource.data.user_id == request.auth.uid ||
+          getUserRole() == 'admin'
+        );
+      }
+    }
+
+    // Colección de Solicitudes de Contenido
+    match /content_requests/{requestId} {
+      // Lectura: Admin/Manager ven todas, Client ve solo las suyas
+      allow read: if request.auth != null && (
+        getUserRole() == 'admin' ||
+        getUserRole() == 'manager' ||
+        getUserRole() == 'creative' ||
+        (getUserRole() == 'client' && resource.data.client_id == getAssignedClientId())
+      );
+      
+      // Creación: Solo clientes pueden crear solicitudes
+      // Creación: Clientes (suyas) o Admin (cualquiera)
+      allow create: if request.auth != null && (
+        (getUserRole() == 'client' && request.resource.data.client_id == getAssignedClientId()) ||
+        getUserRole() == 'admin'
+      );
+      
+      // Actualización:
+      // - Admin/Manager: pueden editar cualquier solicitud
+      // - Client: puede editar SOLO sus solicitudes (no puede tocar status/respuesta/conversion)
+      allow update: if request.auth != null && (
+        getUserRole() == 'admin' ||
+        getUserRole() == 'manager' ||
+        (
+          getUserRole() == 'client' &&
+          resource.data.client_id == getAssignedClientId() &&
+          resource.data.requested_by == request.auth.uid &&
+
+          // Campos que NO se pueden modificar por clientes
+          request.resource.data.client_id == resource.data.client_id &&
+          request.resource.data.requested_by == resource.data.requested_by &&
+          request.resource.data.requested_by_name == resource.data.requested_by_name &&
+          request.resource.data.createdAt == resource.data.createdAt &&
+          request.resource.data.status == resource.data.status &&
+          request.resource.data.response == resource.data.response &&
+          request.resource.data.responded_by == resource.data.responded_by &&
+          request.resource.data.respondedAt == resource.data.respondedAt &&
+          request.resource.data.converted_post_id == resource.data.converted_post_id
+        )
+      );
+
+      // Borrado:
+      // - Admin/Manager: pueden borrar
+      // - Client: puede borrar SOLO sus solicitudes
+      allow delete: if request.auth != null && (
+        getUserRole() == 'admin' ||
+        getUserRole() == 'manager' ||
+        (
+          getUserRole() == 'client' &&
+          resource.data.client_id == getAssignedClientId() &&
+          resource.data.requested_by == request.auth.uid
+        )
+      );
+    }
+
+    // Activity logs de usuarios cliente (trazabilidad)
+    match /client_activity_logs/{logId} {
+      // Lectura: Admin, Manager, o cliente del mismo client_id
+      allow read: if request.auth != null && (
+        getUserRole() == 'admin' ||
+        getUserRole() == 'manager' ||
+        (getUserRole() == 'client' && resource.data.client_id == getAssignedClientId())
+      );
+      
+      // Creación: usuarios autenticados (se crean desde acciones del cliente)
+      allow create: if request.auth != null;
+      
+      // Solo Admin puede borrar
+      allow delete: if request.auth != null && getUserRole() == 'admin';
+    }
+
+    // Notificaciones: Usuario puede leer/actualizar las suyas, sistema puede crear
+    match /notifications/{notificationId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow update: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow create: if request.auth != null; // Cloud Functions o authenticated users
+      allow delete: if request.auth != null && resource.data.user_id == request.auth.uid;
+    }
+
+    // Tokens FCM: Usuario puede crear/borrar los suyos
+    match /user_tokens/{tokenId} {
+      allow read: if request.auth != null && resource.data.user_id == request.auth.uid;
+      allow create: if request.auth != null && request.resource.data.user_id == request.auth.uid;
+      allow delete: if request.auth != null && resource.data.user_id == request.auth.uid;
+    }
+    // Templates de Contenido
+    match /content_templates/{templateId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && (getUserRole() == 'admin' || getUserRole() == 'manager');
+    }
+
+    // Configuración global (settings de la agencia, diccionario de labels)
+    match /settings/{settingId} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && getUserRole() == 'admin';
+    }
+
+    // Preferencias de usuario (notificaciones, theme, etc.)
+    match /user_preferences/{userId} {
+      allow read: if request.auth != null && request.auth.uid == userId;
+      allow write: if request.auth != null && request.auth.uid == userId;
+    }
+
+  }
+}
