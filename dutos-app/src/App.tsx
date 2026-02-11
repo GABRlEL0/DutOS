@@ -250,7 +250,7 @@ function AppRoutes() {
 
 function App() {
   return (
-    <BrowserRouter>
+    <BrowserRouter basename="/DutOS">
       <AppRoutes />
     </BrowserRouter>
   );
