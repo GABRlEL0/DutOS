@@ -78,7 +78,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
           <div className="flex items-center justify-between p-6 border-b border-gray-50">
             <Link to="/" className="flex items-center gap-3 group">
               <div className="relative w-10 h-10 transition-transform group-hover:scale-105">
-                <img src="/logo.png" alt="DUTOS Logo" className="w-full h-full object-contain" />
+                <img src={`${import.meta.env.BASE_URL}logo.png`} alt="DUTOS Logo" className="w-full h-full object-contain" />
               </div>
               <div>
                 <span className="block text-xl font-bold tracking-tight text-gray-900 leading-none font-display">DUTOS</span>
@@ -163,7 +163,7 @@ export function Layout({ children }: { children: React.ReactNode }) {
             <Menu className="w-6 h-6" />
           </button>
           <div className="flex items-center gap-2">
-            <img src="/logo.png" alt="Logo" className="w-8 h-8 object-contain" />
+            <img src={`${import.meta.env.BASE_URL}logo.png`} alt="Logo" className="w-8 h-8 object-contain" />
             <span className="font-bold text-gray-900 font-display text-lg">DUTOS</span>
           </div>
           <NotificationBell />
