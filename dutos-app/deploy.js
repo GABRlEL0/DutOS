@@ -29,9 +29,9 @@ async function deploy() {
         // If it fails or looks wrong, we might need adjustments. 
         // But for a specific FTP user like DutOS@duts.com.ar, usually the root is the right place.
 
-        await client.ensureDir("/")
+        await client.ensureDir("/DutOS")
         await client.clearWorkingDir()
-        await client.uploadFromDir(path.join(__dirname, "dist"), "/")
+        await client.uploadFromDir(path.join(__dirname, "dist"), "/DutOS")
 
         console.log("Upload success!");
     }
