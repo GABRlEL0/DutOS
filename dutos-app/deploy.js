@@ -37,6 +37,7 @@ async function deploy() {
     }
     catch (err) {
         console.log("Error:", err);
+        process.exit(1);
     }
     client.close()
 }
